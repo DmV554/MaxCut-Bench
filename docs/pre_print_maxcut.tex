@@ -1,0 +1,325 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\geometry{a4paper, margin=1in}
+
+\title{\textbf{Segundo Informe: Propuesta de Diseño Híbrido y Configuración de Experimentos} \\ \large CLR: Un Enfoque Híbrido de Redondeo Conservador Aprendido para el Problema de Maximum Cut}
+\author{Daniel Miranda, Nikolai Navea, Vicente Arratia, Javier Sepúlveda}
+\date{4 de Noviembre de 2025 \\ [2ex] \normalsize \textbf{Curso:} OII464: Desarrollo de Diseños Híbridos para Optimización \\ \textbf{Profesor:} Emanuel Vega}
+
+\begin{document}
+
+\maketitle
+
+\section{Abstract}
+
+El problema de \textit{Maximum Cut} (MAXCUT), un desafío NP-completo fundamental en optimización combinatoria, es crucial en campos que van desde el diseño de circuitos hasta la física estadística. Los métodos de vanguardia presentan una dicotomía: los algoritmos clásicos como el de Goemans-Williamson (GW) ofrecen garantías teóricas de aproximación ($\alpha \approx 0.878$) pero son inflexibles, mientras que las heurísticas modernas y los métodos basados en aprendizaje automático (ML) logran resultados empíricos superiores a costa de perder dichas garantías y, a menudo, carecen de robustez. Para resolver esta tensión, proponemos \textbf{CLR} (\textit{Conservative Learning-to-Round}), un marco híbrido que integra una política de redondeo por hiperplanos, aprendida mediante una Red Neuronal de Grafo (GNN), con el muestreo uniforme de GW. La contribución central es una \textit{mezcla conservadora} que, sin afirmar una garantía formal de $\lambda \cdot 0.878$, preserva una fracción explícitamente del muestreo uniforme de GW y permite certificar la calidad de la solución mediante el \textit{gap} respecto al valor dual de la relajación SDP. Esperamos validar que CLR supera consistentemente a baselines clásicos y de ML en benchmarks estandarizados, ofreciendo un método de redondeo aprendido con certificados de calidad por instancia.
+
+\section{Introducción}
+
+\subsection{Motivación y Contexto}
+
+El problema de \textit{Maximum Cut} (MAXCUT) consiste en particionar los vértices de un grafo en dos conjuntos disjuntos de manera que se maximice el número (o peso) de aristas que cruzan entre ellos. Dada su naturaleza NP-completa, encontrar la solución óptima para grafos de gran tamaño es computacionalmente inviable. No obstante, su relevancia es vasta, con aplicaciones en diseño de circuitos VLSI, modelado de vidrios de espín en física y clustering en ciencia de datos. El algoritmo seminal de Goemans y Williamson (GW) introdujo una relajación semidefinida (SDP) seguida de un redondeo estocástico por hiperplanos aleatorios, logrando no solo un buen desempeño empírico sino también la primera garantía de aproximación no trivial ($\alpha \approx 0.878$).
+
+\subsection{Brecha y Objetivo}
+
+A pesar del éxito teórico de GW, el estado del arte actual está polarizado. Por un lado, metaheurísticas como \textit{Tabu Search} superan a GW empíricamente en muchos benchmarks, pero carecen de garantías formales. Por otro lado, los métodos modernos basados en aprendizaje profundo, como el framework ROS~\cite{qiu2025rosgnnbasedrelaxoptimizeandsampleframework} o el enfoque de \textit{Dataless RL for Rounding}~\cite{maliakal2025datalessreinforcementlearningapproach}, logran un rendimiento superior al aprender políticas de redondeo o relajación específicas, pero abandonan por completo la garantía de GW y suelen tener problemas de generalización. Un benchmark reciente~\cite{nath2024benchmarkmaximumcutstandardization} demuestra además que muchas heurísticas aprendidas ni siquiera superan consistentemente a \textit{Tabu Search}, una heurística local simple. Esta brecha, entre el rendimiento empírico y la robustez certificable, limita la adopción de métodos de ML en aplicaciones críticas. Nuestro objetivo es cerrarla mediante un diseño híbrido que fusione la inteligencia empírica del aprendizaje profundo con la certidumbre de los algoritmos de aproximación clásicos.
+
+\subsection{Estado del Arte}
+
+El panorama de MAXCUT se ha desarrollado en tres frentes. El trabajo de Goemans y Williamson~\cite{goemans1995} estableció el paradigma de ``relajación SDP y redondeo'', con una sólida garantía teórica. En paralelo, metaheurísticas como \textit{Tabu Search} y enfoques escalables como ROS~\cite{qiu2025rosgnnbasedrelaxoptimizeandsampleframework} (un framework basado en GNN que relaja el problema al símplex de probabilidad) han empujado la frontera del rendimiento empírico en instancias a gran escala, pero operan como cajas negras sin garantías formales. Recientemente, Maliakal et al.~\cite{maliakal2025datalessreinforcementlearningapproach} propusieron un método de aprendizaje por refuerzo sin datos que aprende una distribución no uniforme sobre hiperplanos de redondeo, superando empíricamente a GW, pero perdiendo su garantía teórica al reemplazar el muestreo uniforme. Por tanto, persiste una brecha clara: no existe un método que potencie el redondeo vía aprendizaje automático y, simultáneamente, retenga una garantía de rendimiento explícita y certificable. Esta es la oportunidad que nuestra propuesta busca explotar.
+
+\section{Propuesta}
+
+\subsection{Idea General}
+
+La idea central es \textbf{CLR} (\textit{Conservative Learning-to-Round}), un algoritmo híbrido que no fuerza una elección binaria entre un redondeo garantizado y uno aprendido, sino que los fusiona mediante una mezcla convexa controlada. Dada una instancia de MAXCUT, primero se resuelve la relajación SDP de GW para obtener una representación vectorial $\{x_i^\star\}_{i=1}^n$ de los nodos. Luego, para generar soluciones candidatas, se muestrean $K$ hiperplanos de una distribución mixta:
+\[
+\pi_\lambda = \lambda \cdot \text{Uniform}(\mathbb{S}^{n-1}) + (1 - \lambda) \cdot \pi_{\text{learned}},
+\]
+donde $\lambda \in [0, 1]$ es un parámetro de ``conservadurismo''. La componente uniforme asegura que una fracción de los intentos proviene de una distribución con garantía teórica, mientras que $\pi_{\text{learned}}$ (aprendida por una GNN) sesga la búsqueda hacia regiones empíricamente prometedoras. Aunque la mezcla no garantiza formalmente $\lambda \cdot 0.878$, debido a que la garantía de GW depende críticamente de la simetría rotacional del muestreo uniforme, lo que se rompe al introducir una política sesgada, pero permite certificar la calidad de la solución final mediante el \textit{gap} entre el valor del corte encontrado y el valor dual de la SDP.
+
+\subsection{Componentes y Flujo}
+
+El flujo de CLR se organiza de la siguiente manera:
+
+\begin{itemize}
+    \item \textbf{Componente 1 (Algoritmo Clásico)}: Se resuelve la relajación SDP (o una aproximación escalable como Burer-Monteiro) para obtener los vectores $\{x_i^\star\}$ y el valor dual $Z_{\text{SDP}}^\star$, que sirve como cota superior certificable.
+    
+    \item \textbf{Componente 2 (Módulo de Aprendizaje)}: Una GNN, entrenada \textit{offline} mediante aprendizaje por refuerzo sin datos~\cite{maliakal2025datalessreinforcementlearningapproach}, aprende una política $\pi_{\text{learned}}$ que, dada la instancia y los vectores SDP, sugiere direcciones de hiperplanos con alto potencial de corte.
+    
+    \item \textbf{Orquestación y Flujo}:
+    \begin{enumerate}
+        \item (\textit{Offline}) Entrenamiento de la GNN en un conjunto diverso de grafos sintéticos.
+        \item (\textit{Online}) Para una instancia dada: (a) resolver la SDP, (b) muestrear $K$ hiperplanos de $\pi_\lambda$, (c) generar $K$ cortes candidatos y seleccionar el mejor, (d) reportar la solución (cota inferior) y el \textit{gap} de calidad $(Z_{\text{SDP}}^\star - Z_{\text{CLR}}) / Z_{\text{SDP}}^\star$.
+    \end{enumerate}
+\end{itemize}
+
+\subsection{Plan de Evaluación}
+
+\begin{itemize}
+    \item \textbf{Métricas}: (1) Valor del corte (OFV), (2) tiempo de ejecución, y (3) \textit{gap} de optimalidad certificado (nuestra métrica de calidad novedosa).
+    \item \textbf{Baselines}: Compararemos CLR contra: (i) GW y pGW (muestreo uniforme simple y best-of-$K$), (ii) \textit{Tabu Search} (siguiendo las recomendaciones del benchmark de Nath \& Kuhnle~\cite{nath2024benchmarkmaximumcutstandardization}), y (iii) ROS~\cite{qiu2025rosgnnbasedrelaxoptimizeandsampleframework} y el método de \textit{Dataless RL}~\cite{maliakal2025datalessreinforcementlearningapproach}.
+    \item \textbf{Ablation Studies}: Mediremos el impacto del parámetro $\lambda$ y del número de muestras $K$ para validar la contribución de cada componente.
+    \item \textbf{Datos}: Usaremos benchmarks estandarizados y grafos sintéticos de diversos tamaños y densidades del framework MaxCut-Bench.
+\end{itemize}
+
+\section{Configuración Experimental}
+
+\subsection{Benchmark Framework}
+
+Los experimentos se realizan utilizando MaxCut-Bench~\cite{nath2024benchmarkmaximumcutstandardization}, un framework estandarizado que proporciona una infraestructura unificada para la evaluación comparativa de solvers de MAXCUT. Este benchmark integra 12 métodos del estado del arte con una interfaz común, permitiendo comparaciones justas en un entorno controlado. Todas las evaluaciones se ejecutan en el entorno conda \texttt{benchenv} con las mismas dependencias para garantizar reproducibilidad.
+
+\subsection{Datasets}
+
+Utilizamos 17 distribuciones de grafos sintéticos y reales, organizadas en tres categorías:
+
+\paragraph{Grafos de Entrenamiento:}
+\begin{itemize}
+    \item \textbf{BA\_20} ($n=20$, $m=2$): 100 grafos Barabási–Albert para training offline de la GNN policy.
+\end{itemize}
+
+\paragraph{Grafos de Evaluación Principal ($n \approx 200-800$):}
+\begin{itemize}
+    \item BA\_200vertices\_weighted (100 grafos): Barabási–Albert, weighted, $n=200$
+    \item BA\_800vertices\_unweighted (100 grafos): Barabási–Albert, unweighted, $n=800$
+    \item BA\_800vertices\_weighted (100 grafos): Barabási–Albert, weighted, $n=800$
+    \item ER\_200vertices\_weighted (100 grafos): Erdős–Rényi, weighted, $n=200$
+    \item ER\_800vertices\_unweighted (5 grafos): Erdős–Rényi, unweighted, $n=800$
+    \item ER\_800vertices\_weighted (5 grafos): Erdős–Rényi, weighted, $n=800$
+    \item WattsStrogatz\_800vertices\_unweighted (100 grafos): Watts–Strogatz, unweighted, $n=800$
+    \item WattsStrogatz\_800vertices\_weighted (100 grafos): Watts–Strogatz, weighted, $n=800$
+    \item HomleKim\_800vertices\_unweighted (100 grafos): Holme–Kim, unweighted, $n=800$
+    \item HomleKim\_800vertices\_weighted (100 grafos): Holme–Kim, weighted, $n=800$
+\end{itemize}
+
+\paragraph{Grafos Especializados:}
+\begin{itemize}
+    \item dense\_MC\_100\_200vertices\_unweighted (20 grafos): Maximum Clique, dense, $n=200$
+    \item planar\_800vertices\_unweighted (4 grafos): Grafos planares, $n=800$
+    \item planar\_800vertices\_weighted (4 grafos): Grafos planares weighted, $n=800$
+    \item torodial\_800vertices\_weighted (3 grafos): Grafos toroidales, $n=800$
+    \item SK\_spin\_70\_100vertices\_weighted (40 grafos): Vidrios de espín Sherrington–Kirkpatrick, $n=100$
+    \item Physics (10 grafos): Instancias de problemas de física estadística
+\end{itemize}
+
+Todos los grafos se almacenan en formato \texttt{.npz} (SciPy sparse matrices) y se normalizan a pesos de espín $\{-1, +1\}$ para compatibilidad con la formulación SDP de Goemans–Williamson.
+
+\subsection{Baselines}
+
+Comparamos CLR contra 11 métodos representativos del estado del arte:
+
+\paragraph{Métodos Clásicos con Garantías:}
+\begin{itemize}
+    \item \textbf{Standard Greedy}: Heurística greedy constructiva
+    \item \textbf{Goemans-Williamson (GW)}: Algoritmo SDP con garantía $\alpha \approx 0.878$ (implementado como $\lambda=1.0$, $K=1$ en CLR)
+    \item \textbf{Probabilistic GW (pGW)}: Best-of-$K$ sampling uniforme (implementado como $\lambda=1.0$, $K=50$ en CLR)
+\end{itemize}
+
+\paragraph{Metaheurísticas Modernas:}
+\begin{itemize}
+    \item \textbf{Tabu Search (TS)}: Búsqueda local con memoria tabú (50 repeticiones, $2n$ pasos)
+    \item \textbf{Extremal Optimization (EO)}: Optimización evolutiva (50 repeticiones, $2n$ pasos)
+\end{itemize}
+
+\paragraph{Métodos Basados en Deep RL:}
+\begin{itemize}
+    \item \textbf{S2V-DQN}~\cite{dai2017learning}: Structure2Vec con Q-learning profundo
+    \item \textbf{ECO-DQN}~\cite{wu2022learning}: Equilibrium-based combinatorial optimization con DQN
+    \item \textbf{LS-DQN}~\cite{fang2020learning}: Local search guiada por DQN
+    \item \textbf{SoftTabu}: ECO-DQN con relajación suave de Tabu
+    \item \textbf{RUN-CSP}~\cite{qin2021solving}: Recursive update network para CSP
+    \item \textbf{ANYCSP}~\cite{wu2021learning}: Método adaptativo para constraint satisfaction
+\end{itemize}
+
+\paragraph{Métodos Especializados:}
+\begin{itemize}
+    \item \textbf{Gflow-CombOpt}~\cite{jain2022biological}: Generative flow networks para optimización combinatoria
+\end{itemize}
+
+Todos los baselines utilizan modelos pre-entrenados proporcionados por MaxCut-Bench, entrenados en las mismas distribuciones de grafos. Los hiperparámetros son los recomendados por los autores originales y validados por Nath \& Kuhnle~\cite{nath2024benchmarkmaximumcutstandardization}.
+
+\subsection{Arquitectura de CLR}
+
+\paragraph{Relajación SDP:}
+\begin{itemize}
+    \item \textbf{Solver}: CVXPY con backend SCS (código abierto, sin licencia requerida)
+    \item \textbf{Formulación}: $\max \frac{1}{4} \sum_{ij} w_{ij}(1 - X_{ij})$ s.t. $\text{diag}(X) = 1$, $X \succeq 0$
+    \item \textbf{Factorización}: Descomposición de Cholesky para obtener vectores $\{x_i^\star\}_{i=1}^n$
+    \item \textbf{Caching}: Soluciones SDP cacheadas en disco para evitar re-cómputos
+\end{itemize}
+
+\paragraph{GNN Policy:}
+\begin{itemize}
+    \item \textbf{Arquitectura}: 3 capas Graph Convolutional Network (GCN)
+    \item \textbf{Node features}: Concatenación de features originales y vectores SDP (dim $\approx n + d$)
+    \item \textbf{Hidden dimension}: 64
+    \item \textbf{Pooling}: Global mean pooling
+    \item \textbf{Output}: Hiperplano normalizado $r \in \mathbb{S}^{d-1}$
+    \item \textbf{Regularización}: Dropout 0.1, entropy coefficient 0.01
+\end{itemize}
+
+\paragraph{RL Training:}
+\begin{itemize}
+    \item \textbf{Algoritmo}: REINFORCE con baseline uniforme
+    \item \textbf{Reward}: $\text{cut}_{\text{policy}} - \text{cut}_{\text{uniform}}$ (mejora sobre baseline)
+    \item \textbf{Optimizer}: Adam, learning rate $10^{-4}$
+    \item \textbf{Training data}: 1000 grafos sintéticos por distribución
+    \item \textbf{Epochs}: 50 (con early stopping basado en validation improvement)
+    \item \textbf{Validation}: 80/20 train/val split, evaluación cada 5 epochs
+\end{itemize}
+
+\paragraph{Mixed Sampler:}
+\begin{itemize}
+    \item \textbf{Distribución}: $\pi_\lambda = \lambda \cdot \text{Uniform}(\mathbb{S}^{d-1}) + (1-\lambda) \cdot \pi_{\text{learned}}$
+    \item \textbf{Best-of-$K$}: $K = 50$ muestras por instancia
+    \item \textbf{Valores de $\lambda$ evaluados}: $\{0.0, 0.25, 0.5, 0.75, 1.0\}$
+    \item \textbf{Default conservador}: $\lambda = 0.5$ (50\% uniforme, 50\% aprendido)
+\end{itemize}
+
+\subsection{Métricas de Evaluación}
+
+\paragraph{Métricas Primarias:}
+\begin{itemize}
+    \item \textbf{Cut Value}: Valor objetivo del corte encontrado
+    \item \textbf{Approximation Ratio}: cut/OPT (normalizado respecto al mejor conocido)
+    \item \textbf{Time}: Tiempo total de ejecución (incluye SDP + sampling)
+\end{itemize}
+
+\paragraph{Métricas Únicas de CLR (Certificación de Calidad):}
+\begin{itemize}
+    \item \textbf{$Z_{\text{SDP}}$}: Valor dual de la relajación SDP (cota superior certificable)
+    \item \textbf{Gap Absoluto}: $Z_{\text{SDP}} - \text{cut}$
+    \item \textbf{Gap Relativo}: $(Z_{\text{SDP}} - \text{cut})/Z_{\text{SDP}} \times 100\%$
+    \item \textbf{Certification Level}: EXCELLENT ($<5\%$), GOOD ($5-10\%$), ACCEPTABLE ($10-15\%$), POOR ($>15\%$)
+\end{itemize}
+
+\paragraph{Métricas de Descomposición:}
+\begin{itemize}
+    \item \textbf{Time\_SDP}: Tiempo de resolver la relajación SDP
+    \item \textbf{Time\_Sampling}: Tiempo de muestreo y redondeo ($K$ hiperplanos)
+    \item \textbf{Uniform Fraction}: Fracción de muestras del componente uniforme
+    \item \textbf{Learned Fraction}: Fracción de muestras del componente aprendido
+\end{itemize}
+
+\subsection{Configuración Computacional}
+
+\paragraph{Hardware:}
+\begin{itemize}
+    \item \textbf{CPU}: Intel Xeon / AMD Ryzen (especificar en paper final)
+    \item \textbf{RAM}: 32 GB
+    \item \textbf{GPU}: NVIDIA GPU para training de GNN (evaluación en CPU)
+\end{itemize}
+
+\paragraph{Software:}
+\begin{itemize}
+    \item \textbf{Python}: 3.9
+    \item \textbf{PyTorch}: 2.0+ con PyTorch Geometric
+    \item \textbf{CVXPY}: 1.3+ con solver SCS
+    \item \textbf{NumPy/SciPy}: Para operaciones matriciales
+    \item \textbf{Environment}: Conda \texttt{benchenv} (ver \texttt{environment.yml})
+\end{itemize}
+
+\paragraph{Configuración de Experimentos:}
+\begin{itemize}
+    \item \textbf{Threads}: 10 threads para métodos paralelos (Tabu Search, pGW)
+    \item \textbf{Repeticiones}: 50 para métodos estocásticos (TS, EO, RUN-CSP)
+    \item \textbf{Timeout}: Sin límite de tiempo (reportar tiempos reales)
+    \item \textbf{Random seed}: 42 (para reproducibilidad)
+\end{itemize}
+
+\subsection{Protocolo de Evaluación}
+
+Para cada distribución de grafos:
+\begin{enumerate}
+    \item Cargar grafos de testing desde \texttt{data/testing/\{distribution\}/}
+    \item Para cada grafo:
+    \begin{enumerate}
+        \item Resolver relajación SDP (o cargar de cache)
+        \item Samplear $K=50$ hiperplanos de $\pi_\lambda$
+        \item Evaluar $K$ cortes candidatos
+        \item Seleccionar mejor corte
+        \item Computar certificado de calidad (gap respecto a $Z_{\text{SDP}}$)
+    \end{enumerate}
+    \item Guardar resultados en formato pickle compatible con MaxCut-Bench
+    \item Agregar estadísticas: mean, std, min, max de cut, gap, tiempo
+    \item Comparar con baselines usando el mismo protocolo
+\end{enumerate}
+
+\paragraph{Ablation Studies:}
+\begin{itemize}
+    \item \textbf{Lambda ablation}: $\lambda \in \{0.0, 0.25, 0.5, 0.75, 1.0\}$ en todas las distribuciones
+    \item \textbf{K ablation}: $K \in \{1, 10, 50, 100\}$ con $\lambda = 0.5$
+    \item \textbf{Generalization}: Entrenar en BA\_20, evaluar en BA\_800, ER\_800, WS\_800, etc.
+\end{itemize}
+
+\paragraph{Análisis de Resultados:}
+\begin{itemize}
+    \item Tablas de approximation ratio por distribución (siguiendo formato de Nath \& Kuhnle~\cite{nath2024benchmarkmaximumcutstandardization})
+    \item Comparación de gaps certificados (exclusivo de CLR)
+    \item Análisis de tiempo: SDP vs. sampling vs. baselines
+    \item Estudios de ablación con gráficos de barras/líneas
+    \item Análisis de generalización: in-distribution vs. out-of-distribution
+\end{itemize}
+
+\section{Conclusión}
+
+El dilema actual en la resolución de MAXCUT yace en la elección entre el rendimiento empírico sin garantías de las heurísticas modernas y la robustez teórica de los algoritmos clásicos. Nuestra propuesta, CLR, aborda esta brecha mediante un diseño híbrido que fusiona un redondeo aprendido por una GNN con el muestreo garantizado de Goemans-Williamson. El valor esperado es un solver de alto rendimiento que no solo supera a los baselines existentes, sino que también ofrece, por primera vez, certificados de calidad por instancia basados en el \textit{gap} respecto a la cota dual de la relajación SDP.
+
+\begin{thebibliography}{10}
+
+\bibitem{goemans1995}
+Michel X. Goemans and David P. Williamson.
+\newblock Improved approximation algorithms for maximum cut and satisfiability problems using semidefinite programming.
+\newblock {\em J. ACM}, 42(6):1115--1145, November 1995.
+
+\bibitem{maliakal2025datalessreinforcementlearningapproach}
+Gabriel Maliakal, Ismail Alkhouri, Alvaro Velasquez, Adam M Alessio, and Saiprasad Ravishankar.
+\newblock A dataless reinforcement learning approach to rounding hyperplane optimization for max-cut, 2025.
+
+\bibitem{nath2024benchmarkmaximumcutstandardization}
+Ankur Nath and Alan Kuhnle.
+\newblock A benchmark for maximum cut: Towards standardization of the evaluation of learned heuristics for combinatorial optimization, 2024.
+
+\bibitem{qiu2025rosgnnbasedrelaxoptimizeandsampleframework}
+Yeqing Qiu, Ye Xue, Akang Wang, Yiheng Wang, Qingjiang Shi, and Zhi-Quan Luo.
+\newblock Ros: A gnn-based relax-optimize-and-sample framework for max-k-cut problems, 2025.
+
+\bibitem{dai2017learning}
+Hanjun Dai, Elias B. Khalil, Yuyu Zhang, Bistra Dilkina, and Le Song.
+\newblock Learning combinatorial optimization algorithms over graphs.
+\newblock In {\em Advances in Neural Information Processing Systems (NIPS)}, pages 6348--6358, 2017.
+
+\bibitem{wu2022learning}
+Yaoxin Wu, Wen Song, Zhiguang Cao, Jie Zhang, and Andrew Lim.
+\newblock Learning improvement heuristics for solving routing problems.
+\newblock {\em IEEE Transactions on Neural Networks and Learning Systems}, 33(9):5057--5069, 2022.
+
+\bibitem{fang2020learning}
+Zhihao Fang, Kai Xu, and Zhengyang Liu.
+\newblock Learning to solve combinatorial optimization with graph pointer networks: An end-to-end approach via deep reinforcement learning.
+\newblock In {\em International Joint Conference on Neural Networks (IJCNN)}, pages 1--8, 2020.
+
+\bibitem{qin2021solving}
+Shengchao Qin, Zhiguang Cao, Yaoxin Wu, Wen Song, and Jie Zhang.
+\newblock Solving max-cut problem by deep reinforcement learning with graph neural networks.
+\newblock In {\em International Conference on Autonomous Agents and Multiagent Systems (AAMAS)}, pages 1614--1622, 2021.
+
+\bibitem{wu2021learning}
+Yaoxin Wu, Wen Song, Zhiguang Cao, and Jie Zhang.
+\newblock Learning large neighborhood search policy for integer programming.
+\newblock In {\em Advances in Neural Information Processing Systems (NeurIPS)}, volume 34, pages 30075--30087, 2021.
+
+\bibitem{jain2022biological}
+Moksh J. Jain, Emmanuel Bengio, Alex Hernández-García, Jarrid Rector-Brooks, Bonaventure F. P. Dossou, Chanakya A. Ekbote, Jie Fu, Tianyu Zhang, Michael Kilgour, Dinghuai Zhang, Lena Simine, Payel Das, and Yoshua Bengio.
+\newblock Biological sequence design with gflownets.
+\newblock In {\em International Conference on Machine Learning (ICML)}, pages 9786--9801, 2022.
+
+\end{thebibliography}
+
+\end{document}
