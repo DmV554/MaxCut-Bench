@@ -66,12 +66,12 @@ class SDPSolver:
                     return pickle.load(f)
         
         # Formular problema SDP
-        # Para MaxCut con matriz {-1, 0, +1}:
-        # Cut = Σ_{(i,j): s_i ≠ s_j} w_ij  (CON SIGNO)
-        # En forma SDP: maximize (1/4) * Σ w_ij * (1 - X_ij)
+        # Para grafos con pesos de espín {-1, +1}:
+        # maximize: (1/4) * Σ_ij w_ij (1 - X_ij)
+        # subject to: X_ii = 1 ∀i, X ⪰ 0
         X = cp.Variable((n, n), PSD=True)
         
-        # Objetivo: (1/4) * Σ w_ij * (1 - X_ij)
+        # Objetivo: maximizar el corte esperado
         objective = 0.25 * cp.sum(cp.multiply(adjacency_matrix, 1 - X))
         
         # Restricción: diagonal = 1 (vectores unitarios)
@@ -170,13 +170,8 @@ def evaluate_hyperplane_cut(vectors: np.ndarray,
     # Manejar caso de proyección cero (asignar +1 por defecto)
     spins[spins == 0] = 1
     
-    # Calcular valor del corte: aristas cortadas con peso CON signo
-    n = len(spins)
-    cut = 0.0
-    for i in range(n):
-        for j in range(i+1, n):
-            w_ij = adjacency_matrix[i, j]
-            if w_ij != 0 and spins[i] != spins[j]:  # Arista cortada
-                cut += w_ij  # CON signo
+    # Calcular valor del corte
+    # cut = (1/4) * Σ_ij w_ij (1 - s_i*s_j)
+    cut = 0.25 * np.sum(adjacency_matrix * (1 - np.outer(spins, spins)))
     
     return cut

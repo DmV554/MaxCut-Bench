@@ -198,8 +198,8 @@ def train_clr(args):
     # 3. Preparar datos (resolver SDPs)
     print("\nPreparando datos de training (resolviendo SDPs)...")
     start_time = time.time()
-    train_data = prepare_training_data(train_graphs, sdp_solver)
-    val_data = prepare_training_data(val_graphs, sdp_solver)
+    train_data = prepare_training_data(train_graphs, sdp_solver, args.cache_dir)
+    val_data = prepare_training_data(val_graphs, sdp_solver, args.cache_dir)
     prep_time = time.time() - start_time
     print(f"✅ Preparación completada en {prep_time:.2f}s\n")
     

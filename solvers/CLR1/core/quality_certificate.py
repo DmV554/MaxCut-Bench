@@ -32,9 +32,8 @@ def compute_quality_certificate(cut_value: float,
             'improvement_over_gw': float | None
         }
     """
-    # Verificar que cut <= Z_SDP (con tolerancia numérica más generosa)
-    tolerance = 1e-4  # Tolerancia más grande para problemas numéricos del SDP
-    if cut_value > Z_SDP + tolerance:
+    # Verificar que cut <= Z_SDP (con tolerancia numérica)
+    if cut_value > Z_SDP + 1e-6:
         raise ValueError(f"Cut ({cut_value:.4f}) excede cota superior SDP ({Z_SDP:.4f}). "
                         "Hay un error en la implementación.")
     

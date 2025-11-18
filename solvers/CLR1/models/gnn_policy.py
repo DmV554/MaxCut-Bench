@@ -78,14 +78,11 @@ class GNNPolicy(nn.Module):
         
         # Output MLP: graph embedding → hyperplane parameters
         # Output dim = sdp_vector_dim (el hiperplano debe vivir en R^d)
-        # Agregamos Tanh al final para limitar valores entre [-1, 1]
-        # Esto evita que el output crezca sin control
         self.output_mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, sdp_vector_dim),
-            nn.Tanh()  # Limita output a [-1, 1]
+            nn.Linear(hidden_dim, sdp_vector_dim)
         )
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -105,16 +102,7 @@ class GNNPolicy(nn.Module):
             hyperplane: [batch_size, sdp_vector_dim] (sin normalizar aún)
         """
         x, edge_index = data.x, data.edge_index
-        
-        # Manejar batch correctamente
-        if hasattr(data, 'batch') and data.batch is not None:
-            batch = data.batch.to(self.device)
-        else:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device=self.device)
-        
-        # Asegurar que todo esté en el mismo device
-        x = x.to(self.device)
-        edge_index = edge_index.to(self.device)
+        batch = data.batch if hasattr(data, 'batch') else torch.zeros(x.size(0), dtype=torch.long, device=x.device)
         
         # Input projection
         x = self.input_proj(x)
@@ -202,32 +190,23 @@ class GNNPolicy(nn.Module):
             # Grafo sin aristas: crear self-loops
             edge_index = [[i, i] for i in range(n)]
         
-        edge_index = torch.tensor(edge_index, dtype=torch.long, device=self.device).t().contiguous()
+        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
         
-        # Node features: [degree_feature, sdp_vectors]
-        # Asegurar que tengamos exactamente (node_feature_dim + sdp_vector_dim) columnas
+        # Node features: [constant_feature, sdp_vectors]
+        # Por ahora, solo usamos los vectores SDP
+        node_features = torch.tensor(sdp_vectors, dtype=torch.float32)
         
-        # Primero, calcular grados (columna única)
-        degrees = adjacency_matrix.sum(axis=1, keepdims=True)
-        degree_features = torch.tensor(degrees, dtype=torch.float32, device=self.device)
-        
-        # Luego, vectores SDP
-        sdp_features = torch.tensor(sdp_vectors, dtype=torch.float32, device=self.device)
-        
-        # Concatenar: [1 dim (degree), d dims (SDP)]
-        # Esto da total de (1 + d) = (node_feature_dim + sdp_vector_dim)
-        node_features = torch.cat([degree_features, sdp_features], dim=1)
-        
-        # Si hay features adicionales en graph_data, reemplazar degree con esas
+        # Si hay features adicionales en graph_data, concatenarlas
         if 'features' in graph_data:
-            custom_features = torch.tensor(graph_data['features'], dtype=torch.float32, device=self.device)
-            # Asegurar que custom_features tenga la dimensión correcta
-            if custom_features.ndim == 1:
-                custom_features = custom_features.unsqueeze(1)
-            node_features = torch.cat([custom_features, sdp_features], dim=1)
+            extra_features = torch.tensor(graph_data['features'], dtype=torch.float32)
+            node_features = torch.cat([extra_features, node_features], dim=1)
+        else:
+            # Agregar feature constante (grado o 1s)
+            degrees = adjacency_matrix.sum(axis=1, keepdims=True)
+            degree_features = torch.tensor(degrees, dtype=torch.float32)
+            node_features = torch.cat([degree_features, node_features], dim=1)
         
         data = Data(x=node_features, edge_index=edge_index)
-        # Asegurar que TODO el Data object esté en el device correcto
         data = data.to(self.device)
         
         return data
@@ -249,8 +228,7 @@ def create_gnn_policy(sdp_vector_dim: int = 20,
                       hidden_dim: int = 64,
                       num_layers: int = 3,
                       dropout: float = 0.1,
-                      pretrained_path: Optional[str] = None,
-                      transfer_learning: bool = False) -> GNNPolicy:
+                      pretrained_path: Optional[str] = None) -> GNNPolicy:
     """
     Factory function para crear GNN policy.
     
@@ -260,7 +238,6 @@ def create_gnn_policy(sdp_vector_dim: int = 20,
         num_layers: Número de capas GCN
         dropout: Dropout rate
         pretrained_path: Path a modelo preentrenado (.pth)
-        transfer_learning: Si True, carga solo capas GCN compartidas (ignora input/output)
     
     Returns:
         GNNPolicy (cargado si pretrained_path es provisto)
@@ -274,25 +251,9 @@ def create_gnn_policy(sdp_vector_dim: int = 20,
     )
     
     if pretrained_path is not None:
-        checkpoint = torch.load(pretrained_path, map_location=policy.device, weights_only=False)
-        state_dict = checkpoint['model_state_dict']
-        
-        if transfer_learning:
-            # Transfer learning: cargar solo capas GCN compartidas
-            # Filtrar solo los pesos de las capas convolucionales
-            shared_state_dict = {k: v for k, v in state_dict.items() 
-                               if k.startswith('convs.') or k.startswith('dropout')}
-            
-            # Cargar con strict=False para ignorar capas incompatibles
-            missing_keys, unexpected_keys = policy.load_state_dict(shared_state_dict, strict=False)
-            
-            print(f"Transfer learning desde {pretrained_path}")
-            print(f"  Capas GCN cargadas: {len(shared_state_dict)} parámetros")
-            print(f"  Capas inicializadas random: input_proj, output_mlp")
-        else:
-            # Carga normal: todas las capas deben coincidir
-            policy.load_state_dict(state_dict)
-            print(f"Modelo cargado desde {pretrained_path}")
+        checkpoint = torch.load(pretrained_path, map_location=policy.device)
+        policy.load_state_dict(checkpoint['model_state_dict'])
+        print(f"Modelo cargado desde {pretrained_path}")
     
     return policy
 

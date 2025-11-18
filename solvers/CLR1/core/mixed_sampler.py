@@ -194,9 +194,8 @@ class MixedSampler:
         """
         Evalúa el valor del corte para una asignación de spins.
         
-        Para MaxCut con matriz {-1, 0, +1}:
-        - Cut = Σ_{(i,j): s_i ≠ s_j} w_ij  (CON SIGNO, no valor absoluto)
-        - Solo contamos aristas cortadas con su peso original
+        Cut = Σ_{(i,j)} w_ij * (1 - s_i*s_j)/2
+            = (Σ w_ij - s^T W s) / 2
         
         Args:
             spins: Vector {-1, +1}^n
@@ -207,13 +206,10 @@ class MixedSampler:
         """
         n = len(spins)
         
-        # Método correcto: contar aristas cortadas con peso CON signo
-        cut = 0.0
-        for i in range(n):
-            for j in range(i+1, n):  # Solo parte superior (matriz simétrica)
-                w_ij = adjacency_matrix[i, j]
-                if w_ij != 0 and spins[i] != spins[j]:  # Arista cortada
-                    cut += w_ij  # CON signo, no abs()
+        # Versión eficiente: cut = (sum(W) - s^T W s) / 2
+        total_weight = adjacency_matrix.sum()
+        spin_contribution = spins @ adjacency_matrix @ spins
+        cut = (total_weight - spin_contribution) / 2.0
         
         return float(cut)
     

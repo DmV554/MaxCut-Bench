@@ -18,15 +18,12 @@ import pickle
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(__file__))
 
-# Import core modules (required)
-from core.sdp_solver import SDPSolver
-from core.quality_certificate import compute_quality_certificate
-
-# Try to import torch-dependent modules (optional)
 try:
     import torch
     from models.gnn_policy import GNNPolicy, create_gnn_policy
+    from core.sdp_solver import SDPSolver
     from core.mixed_sampler import MixedSampler, create_clr_sampler
+    from core.quality_certificate import compute_quality_certificate
     TORCH_AVAILABLE = True
 except ImportError:
     print("⚠️  PyTorch/PyTorch Geometric no instalado")
@@ -112,60 +109,21 @@ def evaluate_clr(args):
         )
         
         if not os.path.exists(pretrained_path):
-            # Intentar buscar modelos alternativos disponibles
             print(f"⚠️  Modelo no encontrado: {pretrained_path}")
-            available_models = []
-            if os.path.exists(args.pretrained_dir):
-                for dist in os.listdir(args.pretrained_dir):
-                    dist_path = os.path.join(args.pretrained_dir, dist)
-                    if os.path.isdir(dist_path):
-                        model_path = os.path.join(dist_path, 'policy_best.pth')
-                        if os.path.exists(model_path):
-                            available_models.append(dist)
-            
-            if available_models:
-                print(f"   Modelos disponibles: {', '.join(available_models)}")
-                print(f"   Para entrenar en {args.train_distribution}, ejecuta:")
-                print(f"   python solvers/CLR/train.py --distribution {args.train_distribution} --num_graphs 1000 --epochs 50")
-            else:
-                print(f"   No hay modelos preentrenados disponibles.")
-                print(f"   Entrena un modelo primero con:")
-                print(f"   python solvers/CLR/train.py --distribution {args.train_distribution} --num_graphs 1000 --epochs 50")
-            
             print("   Usando solo baseline uniforme (λ=1.0)")
             args.lambda_mix = 1.0
             use_learned_policy = False
         else:
-            # Inferir dimensión de primer grafo del test set
+            # Inferir dimensión de primer grafo
             sdp_result = sdp_solver.solve(test_graphs[0]['adjacency_matrix'])
             sdp_dim = sdp_result['vectors'].shape[1]
-            
-            # Detectar si necesitamos transfer learning
-            # (cuando el modelo fue entrenado con grafos de diferente tamaño)
-            checkpoint = torch.load(pretrained_path, map_location='cpu', weights_only=False)
-            trained_state = checkpoint['model_state_dict']
-            
-            # Verificar dimensión del modelo entrenado
-            if 'output_mlp.3.weight' in trained_state:
-                trained_dim = trained_state['output_mlp.3.weight'].shape[0]
-            else:
-                trained_dim = sdp_dim  # Asumir misma dimensión
-            
-            use_transfer_learning = (trained_dim != sdp_dim)
-            
-            if use_transfer_learning:
-                print(f"⚠️  Dimensión mismatch detectada:")
-                print(f"   Modelo entrenado: {trained_dim}D (grafos ~{trained_dim} nodos)")
-                print(f"   Test set: {sdp_dim}D (grafos ~{sdp_dim} nodos)")
-                print(f"   Usando transfer learning (solo capas GCN)")
             
             gnn_policy = create_gnn_policy(
                 sdp_vector_dim=sdp_dim,
                 hidden_dim=args.hidden_dim,
                 num_layers=args.num_layers,
                 dropout=args.dropout,
-                pretrained_path=pretrained_path,
-                transfer_learning=use_transfer_learning
+                pretrained_path=pretrained_path
             )
             print("✅ GNN policy cargada")
     

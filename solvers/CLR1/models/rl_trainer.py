@@ -11,7 +11,6 @@ Key insight: No necesitamos conocer el óptimo, solo mejorar sobre uniforme.
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
@@ -72,9 +71,7 @@ class RLTrainer:
         else:
             self.device = torch.device(device)
         
-        # Mover GNN al device del trainer y actualizar su device interno
         self.gnn_policy.to(self.device)
-        self.gnn_policy.device = self.device  # Sincronizar device interno del GNN
         
         # Optimizer
         self.optimizer = optim.Adam(self.gnn_policy.parameters(), lr=learning_rate)
@@ -127,22 +124,11 @@ class RLTrainer:
             # Forward pass (sin normalizar)
             hyperplane_unnormalized = self.gnn_policy.forward(pyg_data)  # [1, d]
             
-            # Calcular log probability
-            # NOTA: Simplificación para MVP - asumimos distribución Gaussiana
-            # Normalizamos el output para evitar valores extremos
-            # log π(r) ∝ -||r||² / (2σ²) donde σ = 1.0
-            # Versión futura: usar von Mises-Fisher distribution en la esfera.
-            
-            # Normalizar output para estabilidad
-            norm_squared = torch.sum(hyperplane_unnormalized ** 2)
-            
-            # Log prob como Gaussiana isotrópica con std=1.0
-            # log π(r) = -d/2 * log(2π) - ||r||² / 2
-            # Como la constante no importa para el gradiente, solo usamos:
-            log_prob = -0.5 * norm_squared
-            
-            # Clip para evitar valores extremos
-            log_prob = torch.clamp(log_prob, min=-100, max=0)
+            # Calcular log probability (asumiendo Gaussian en hiperplano no normalizado)
+            # log π(r) ∝ -||r - μ||² donde μ es el output de la GNN
+            # Para simplificar: log π(r) = -||r_unnorm||² + const
+            # Esto es equivalente a L2 regularization
+            log_prob = -0.5 * torch.sum(hyperplane_unnormalized ** 2)
             log_probs.append(log_prob)
             
             # Normalizar y evaluar corte
@@ -210,19 +196,9 @@ class RLTrainer:
         
         rewards = [cut - baseline_value for cut in cuts_policy]
         
-        # Normalizar rewards para estabilidad (IMPORTANTE para REINFORCE)
-        rewards_array = np.array(rewards)
-        if len(rewards_array) > 1 and rewards_array.std() > 1e-8:
-            rewards_normalized = (rewards_array - rewards_array.mean()) / (rewards_array.std() + 1e-8)
-        else:
-            rewards_normalized = rewards_array
-        
-        # Convertir a tensor
-        rewards_tensor = torch.tensor(rewards_normalized, dtype=torch.float32, device=self.device)
-        
         # 4. REINFORCE loss
         policy_loss = 0.0
-        for log_prob, reward in zip(log_probs, rewards_tensor):
+        for log_prob, reward in zip(log_probs, rewards):
             # Gradient ascent: maximize E[log π(r) · R]
             # En PyTorch: minimize -E[log π(r) · R]
             policy_loss += -log_prob * reward
@@ -238,21 +214,8 @@ class RLTrainer:
         # 5. Update policy
         self.optimizer.zero_grad()
         policy_loss.backward()
-        
-        # Gradient clipping más agresivo para estabilidad
-        torch.nn.utils.clip_grad_norm_(self.gnn_policy.parameters(), max_norm=0.5)
-        
-        # Verificar NaN en gradientes
-        has_nan = False
-        for param in self.gnn_policy.parameters():
-            if param.grad is not None and torch.isnan(param.grad).any():
-                has_nan = True
-                break
-        
-        if not has_nan:
-            self.optimizer.step()
-        else:
-            print("⚠️  NaN detectado en gradientes, saltando update")
+        torch.nn.utils.clip_grad_norm_(self.gnn_policy.parameters(), max_norm=1.0)
+        self.optimizer.step()
         
         # 6. Update value network (si se usa)
         value_loss = 0.0
@@ -366,19 +329,10 @@ class RLTrainer:
         return avg_val_stats
     
     def _evaluate_cut(self, spins: np.ndarray, adjacency_matrix: np.ndarray) -> float:
-        """
-        Evalúa el valor del corte usando la fórmula correcta:
-        cut = Σ_{(i,j): s_i ≠ s_j} w_ij
-        
-        Para matriz con pesos {-1, 0, +1}, esto cuenta aristas cortadas.
-        """
-        n = len(spins)
-        cut = 0.0
-        for i in range(n):
-            for j in range(i+1, n):  # Solo parte superior (matriz simétrica)
-                w_ij = adjacency_matrix[i, j]
-                if w_ij != 0 and spins[i] != spins[j]:  # Arista cortada
-                    cut += w_ij  # CON signo
+        """Evalúa el valor del corte."""
+        total_weight = adjacency_matrix.sum()
+        spin_contribution = spins @ adjacency_matrix @ spins
+        cut = (total_weight - spin_contribution) / 2.0
         return float(cut)
     
     def save_checkpoint(self, path: str, epoch: int, stats: Dict):
@@ -401,7 +355,7 @@ class RLTrainer:
     
     def load_checkpoint(self, path: str):
         """Carga checkpoint del modelo."""
-        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(path, map_location=self.device)
         
         self.gnn_policy.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -415,7 +369,8 @@ class RLTrainer:
 
 
 def prepare_training_data(graphs: List[Dict],
-                          sdp_solver) -> List[Tuple]:
+                          sdp_solver,
+                          cache_dir: str = './cache_sdp') -> List[Tuple]:
     """
     Prepara datos de training: resuelve SDPs y cachea resultados.
     
@@ -450,6 +405,10 @@ def prepare_training_data(graphs: List[Dict],
     print(f"✅ {len(training_data)} grafos listos para training")
     
     return training_data
+
+
+# Import para value loss
+import torch.nn.functional as F
 
 
 if __name__ == '__main__':
