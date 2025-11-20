@@ -35,7 +35,10 @@ DEFAULT_TEST_DISTRIBUTIONS = [
 
 def get_available_test_distributions() -> List[str]:
     """Lista todas las distribuciones de test disponibles."""
-    test_dir = 'data/testing'
+    # Navegar a la raíz del proyecto
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(script_dir))  # MaxCut-Bench/
+    test_dir = os.path.join(project_root, 'data', 'testing')
     
     if not os.path.exists(test_dir):
         print(f"⚠️  Directorio de testing no encontrado: {test_dir}")
@@ -62,9 +65,13 @@ def run_evaluation(train_distribution: str,
     print(f"EVALUANDO: {test_distribution}")
     print("="*80)
     
+    # Determinar ruta correcta del script evaluate.py
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    evaluate_script = os.path.join(script_dir, 'evaluate.py')
+    
     cmd = [
         sys.executable,  # python
-        'solvers/CLR/evaluate.py',
+        evaluate_script,
         '--test_distribution', test_distribution,
         '--train_distribution', train_distribution,
         '--lambda_mix', str(lambda_mix),

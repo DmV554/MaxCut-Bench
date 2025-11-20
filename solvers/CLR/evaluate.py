@@ -68,6 +68,10 @@ def load_test_graphs(data_path: str) -> List[Dict]:
 def evaluate_clr(args):
     """Main evaluation function."""
     
+    # Calcular rutas absolutas basadas en la ubicación del script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(script_dir))  # MaxCut-Bench/
+    
     if not TORCH_AVAILABLE:
         print("❌ PyTorch no disponible. Usando solo baseline pGW.")
         use_learned_policy = False
@@ -85,7 +89,7 @@ def evaluate_clr(args):
     print("="*60 + "\n")
     
     # 1. Load test graphs
-    data_path = os.path.join('data/testing', args.test_distribution)
+    data_path = os.path.join(project_root, 'data', 'testing', args.test_distribution)
     if not os.path.exists(data_path):
         print(f"❌ Path no encontrado: {data_path}")
         return
@@ -105,8 +109,15 @@ def evaluate_clr(args):
     gnn_policy = None
     if use_learned_policy:
         print(f"Cargando GNN policy de {args.train_distribution}...")
+        # Determinar si pretrained_dir es absoluto o relativo
+        if os.path.isabs(args.pretrained_dir):
+            pretrained_dir = args.pretrained_dir
+        else:
+            # Si es relativo, usar script_dir como base
+            pretrained_dir = os.path.join(script_dir, 'pretrained')
+        
         pretrained_path = os.path.join(
-            args.pretrained_dir,
+            pretrained_dir,
             args.train_distribution,
             'policy_best.pth'
         )
@@ -115,9 +126,9 @@ def evaluate_clr(args):
             # Intentar buscar modelos alternativos disponibles
             print(f"⚠️  Modelo no encontrado: {pretrained_path}")
             available_models = []
-            if os.path.exists(args.pretrained_dir):
-                for dist in os.listdir(args.pretrained_dir):
-                    dist_path = os.path.join(args.pretrained_dir, dist)
+            if os.path.exists(pretrained_dir):
+                for dist in os.listdir(pretrained_dir):
+                    dist_path = os.path.join(pretrained_dir, dist)
                     if os.path.isdir(dist_path):
                         model_path = os.path.join(dist_path, 'policy_best.pth')
                         if os.path.exists(model_path):
@@ -257,7 +268,7 @@ def evaluate_clr(args):
     df_results['Test Distribution'] = args.test_distribution
     
     # 7. Save results
-    save_folder = os.path.join('results', args.test_distribution)
+    save_folder = os.path.join(project_root, 'results', args.test_distribution)
     os.makedirs(save_folder, exist_ok=True)
     
     save_path = os.path.join(save_folder, 'CLR')
