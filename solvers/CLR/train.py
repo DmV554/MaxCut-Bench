@@ -169,15 +169,6 @@ def train_clr(args):
     if args.load_from_disk:
         print(f"Cargando grafos desde {args.data_path}...")
         graphs = load_graphs_from_disk(args.data_path, max_graphs=args.num_graphs)
-    else:
-        print(f"Generando {args.num_graphs} grafos sintéticos...")
-        graphs = generate_synthetic_graphs(
-            args.distribution,
-            args.num_graphs,
-            n=args.n,
-            m=args.m,
-            p=args.p
-        )
     
     # Split train/val
     num_train = int(len(graphs) * 0.8)
